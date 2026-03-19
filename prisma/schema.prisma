@@ -1,0 +1,81 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  salesperson
+  manager
+}
+
+model User {
+  id           BigInt        @id @default(autoincrement())
+  name         String
+  email        String        @unique
+  role         Role
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+  dailyReports DailyReport[]
+  comments     Comment[]
+
+  @@map("users")
+}
+
+model Customer {
+  id           BigInt        @id @default(autoincrement())
+  name         String
+  companyName  String?       @map("company_name")
+  phone        String?
+  address      String?
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+  visitRecords VisitRecord[]
+
+  @@map("customers")
+}
+
+model DailyReport {
+  id           BigInt        @id @default(autoincrement())
+  userId       BigInt        @map("user_id")
+  reportDate   DateTime      @map("report_date") @db.Date
+  problem      String?       @db.Text
+  plan         String?       @db.Text
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+  user         User          @relation(fields: [userId], references: [id])
+  visitRecords VisitRecord[]
+  comments     Comment[]
+
+  @@unique([userId, reportDate])
+  @@map("daily_reports")
+}
+
+model VisitRecord {
+  id            BigInt      @id @default(autoincrement())
+  dailyReportId BigInt      @map("daily_report_id")
+  customerId    BigInt      @map("customer_id")
+  content       String      @db.Text
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+  dailyReport   DailyReport @relation(fields: [dailyReportId], references: [id])
+  customer      Customer    @relation(fields: [customerId], references: [id])
+
+  @@map("visit_records")
+}
+
+model Comment {
+  id            BigInt      @id @default(autoincrement())
+  dailyReportId BigInt      @map("daily_report_id")
+  commenterId   BigInt      @map("commenter_id")
+  body          String      @db.Text
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+  dailyReport   DailyReport @relation(fields: [dailyReportId], references: [id])
+  commenter     User        @relation(fields: [commenterId], references: [id])
+
+  @@map("comments")
+}
