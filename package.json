@@ -6,13 +6,17 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "prepare": "husky"
   },
   "dependencies": {
     "@prisma/client": "^7.5.0",
     "next": "16.2.0",
     "react": "19.2.4",
     "react-dom": "19.2.4"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": "eslint --fix"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.5",
@@ -24,6 +28,8 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.4.0",
     "prisma": "^7.5.0",
     "tailwindcss": "^4",
     "typescript": "^5",
