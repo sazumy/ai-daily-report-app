@@ -1,16 +1,20 @@
-import { dirname } from "path";
-import { fileURLToPath } from "url";
-import { FlatCompat } from "@eslint/eslintrc";
+import nextPlugin from "@next/eslint-plugin-next";
+import tseslint from "typescript-eslint";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-const compat = new FlatCompat({
-  baseDirectory: __dirname,
-});
-
-const eslintConfig = [
-  ...compat.extends("next/core-web-vitals", "next/typescript"),
+export default tseslint.config(
+  {
+    ignores: [".next/**"],
+  },
+  {
+    plugins: {
+      "@next/next": nextPlugin,
+    },
+    rules: {
+      ...nextPlugin.configs.recommended.rules,
+      ...nextPlugin.configs["core-web-vitals"].rules,
+    },
+  },
+  ...tseslint.configs.recommended,
   {
     rules: {
       // 未使用変数はエラー（_prefix で無視可）
@@ -28,7 +32,5 @@ const eslintConfig = [
       // console.log は警告（warn/error は許可）
       "no-console": ["warn", { allow: ["warn", "error"] }],
     },
-  },
-];
-
-export default eslintConfig;
+  }
+);
