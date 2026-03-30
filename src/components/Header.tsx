@@ -1,45 +1,10 @@
-"use client";
-
-import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
+import { getSession } from "@/lib/session";
+import LogoutButton from "@/components/LogoutButton";
 
-type User = {
-  id: number;
-  name: string;
-  email: string;
-  role: string;
-};
-
-export default function Header() {
-  const router = useRouter();
-  const [user, setUser] = useState<User | null>(null);
-
-  useEffect(() => {
-    fetch("/api/auth/me")
-      .then((res) => {
-        if (!res.ok) return null;
-        return res.json();
-      })
-      .then((data) => {
-        if (data?.user) {
-          setUser(data.user);
-        }
-      })
-      .catch(() => {
-        // ユーザー情報取得失敗時は何もしない
-      });
-  }, []);
-
-  const handleLogout = async () => {
-    try {
-      await fetch("/api/auth/logout", { method: "DELETE" });
-    } catch {
-      // ログアウトAPIエラーは無視してリダイレクト
-    }
-    router.push("/login");
-  };
+export default async function Header() {
+  const session = await getSession();
+  const user = session.user;
 
   return (
     <header className="border-b bg-background">
@@ -62,9 +27,7 @@ export default function Header() {
           {user && (
             <span className="text-sm text-muted-foreground">{user.name}</span>
           )}
-          <Button variant="outline" size="sm" onClick={handleLogout}>
-            ログアウト
-          </Button>
+          <LogoutButton />
         </div>
       </div>
     </header>

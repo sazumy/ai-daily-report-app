@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-export default function ForbiddenPage() {
+export default function Forbidden() {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center gap-4">
       <h1 className="text-4xl font-bold">403</h1>
