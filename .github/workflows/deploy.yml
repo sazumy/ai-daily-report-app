@@ -49,5 +49,5 @@ jobs:
             --platform managed \
             --allow-unauthenticated \
             --port 3000 \
-            --set-env-vars DATABASE_URL=${{ secrets.DATABASE_URL }} \
+            --set-env-vars DATABASE_URL=${{ secrets.DATABASE_URL }},SESSION_SECRET=${{ secrets.SESSION_SECRET }} \
             --add-cloudsql-instances ${{ env.PROJECT_ID }}:${{ env.REGION }}:daily-report-db
