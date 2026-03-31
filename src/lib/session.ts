@@ -1,4 +1,4 @@
-import type { IronSession, SessionOptions } from "iron-session";
+import type { IronSession, SessionOptions } from "iron-session"
 import { getIronSession } from "iron-session"
 import { cookies } from "next/headers"
 
