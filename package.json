@@ -36,6 +36,9 @@
   "lint-staged": {
     "*.{ts,tsx}": "eslint --fix"
   },
+  "optionalDependencies": {
+    "lightningcss-linux-x64-musl": "1.32.0"
+  },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.5",
     "@next/eslint-plugin-next": "^16.2.0",
