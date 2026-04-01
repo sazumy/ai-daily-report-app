@@ -1,11 +1,11 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { sessionOptions } from "@/lib/session"
+import { SESSION_COOKIE_NAME } from "@/lib/session"
 
 export async function middleware(request: NextRequest): Promise<NextResponse> {
   const { pathname } = request.nextUrl
 
   // セッションCookieの存在をチェックしてログイン状態を判定
-  const sessionCookie = request.cookies.get(sessionOptions.cookieName)
+  const sessionCookie = request.cookies.get(SESSION_COOKIE_NAME)
   const isLoggedIn = Boolean(sessionCookie?.value)
 
   const isLoginPage = pathname === "/login"
