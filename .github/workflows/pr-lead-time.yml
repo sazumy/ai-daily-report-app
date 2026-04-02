@@ -10,26 +10,62 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Calculate lead time
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           OPENED_AT="${{ github.event.pull_request.created_at }}"
           MERGED_AT="${{ github.event.pull_request.merged_at }}"
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+
+          # 初回レビュー時刻を取得（DISMISSED を除外し、submitted_at 昇順で最初の1件）
+          FIRST_REVIEW_AT=$(gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}/reviews" \
+            --jq '[.[] | select(.state != "DISMISSED")] | sort_by(.submitted_at) | first | .submitted_at // empty')
 
           OPENED_TS=$(date -d "$OPENED_AT" +%s)
           MERGED_TS=$(date -d "$MERGED_AT" +%s)
-          DIFF=$((MERGED_TS - OPENED_TS))
+          TOTAL_DIFF=$((MERGED_TS - OPENED_TS))
 
-          HOURS=$((DIFF / 3600))
-          MINUTES=$(((DIFF % 3600) / 60))
-          SECONDS=$((DIFF % 60))
+          format_duration() {
+            local diff=$1
+            echo "$((diff / 3600))h $(((diff % 3600) / 60))m $((diff % 60))s"
+          }
+
+          TOTAL_LABEL=$(format_duration $TOTAL_DIFF)
 
           {
             echo "## PR Lead Time"
             echo ""
             echo "| 項目 | 値 |"
             echo "|------|----|"
-            echo "| PR | [#${{ github.event.pull_request.number }} ${{ github.event.pull_request.title }}](${{ github.event.pull_request.html_url }}) |"
+            echo "| PR | [#${PR_NUMBER} ${{ github.event.pull_request.title }}](${{ github.event.pull_request.html_url }}) |"
             echo "| 作成者 | @${{ github.event.pull_request.user.login }} |"
-            echo "| オープン日時 | $OPENED_AT |"
-            echo "| マージ日時 | $MERGED_AT |"
-            echo "| **リードタイム** | **${HOURS}h ${MINUTES}m ${SECONDS}s** |"
+            echo "| オープン日時 | ${OPENED_AT} |"
           } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -n "$FIRST_REVIEW_AT" ]; then
+            FIRST_REVIEW_TS=$(date -d "$FIRST_REVIEW_AT" +%s)
+            WAIT_DIFF=$((FIRST_REVIEW_TS - OPENED_TS))
+            POST_REVIEW_DIFF=$((MERGED_TS - FIRST_REVIEW_TS))
+            WAIT_LABEL=$(format_duration $WAIT_DIFF)
+            POST_REVIEW_LABEL=$(format_duration $POST_REVIEW_DIFF)
+
+            {
+              echo "| 初回レビュー日時 | ${FIRST_REVIEW_AT} |"
+              echo "| マージ日時 | ${MERGED_AT} |"
+              echo ""
+              echo "## 内訳"
+              echo ""
+              echo "| 区間 | 時間 |"
+              echo "|------|------|"
+              echo "| オープン → 初回レビュー（レビュー待ち） | ${WAIT_LABEL} |"
+              echo "| 初回レビュー → マージ（レビュー後） | ${POST_REVIEW_LABEL} |"
+              echo "| **合計リードタイム** | **${TOTAL_LABEL}** |"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "| マージ日時 | ${MERGED_AT} |"
+              echo "| **合計リードタイム** | **${TOTAL_LABEL}** |"
+              echo ""
+              echo "> レビューなしでマージされました。"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
