@@ -1,0 +1,35 @@
+name: PR Lead Time
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  measure-lead-time:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Calculate lead time
+        run: |
+          OPENED_AT="${{ github.event.pull_request.created_at }}"
+          MERGED_AT="${{ github.event.pull_request.merged_at }}"
+
+          OPENED_TS=$(date -d "$OPENED_AT" +%s)
+          MERGED_TS=$(date -d "$MERGED_AT" +%s)
+          DIFF=$((MERGED_TS - OPENED_TS))
+
+          HOURS=$((DIFF / 3600))
+          MINUTES=$(((DIFF % 3600) / 60))
+          SECONDS=$((DIFF % 60))
+
+          {
+            echo "## PR Lead Time"
+            echo ""
+            echo "| 項目 | 値 |"
+            echo "|------|----|"
+            echo "| PR | [#${{ github.event.pull_request.number }} ${{ github.event.pull_request.title }}](${{ github.event.pull_request.html_url }}) |"
+            echo "| 作成者 | @${{ github.event.pull_request.user.login }} |"
+            echo "| オープン日時 | $OPENED_AT |"
+            echo "| マージ日時 | $MERGED_AT |"
+            echo "| **リードタイム** | **${HOURS}h ${MINUTES}m ${SECONDS}s** |"
+          } >> "$GITHUB_STEP_SUMMARY"
