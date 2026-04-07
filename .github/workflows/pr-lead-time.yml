@@ -114,3 +114,28 @@ jobs:
             -H "Authorization: Bearer ${ACCESS_TOKEN}" \
             -H "Content-Type: application/json" \
             -d "$BODY"
+
+      - name: Write to Google Sheets (Apps Script)
+        run: |
+          NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          BODY=$(jq -n \
+            --arg now "$NOW" \
+            --arg pr_number "${{ github.event.pull_request.number }}" \
+            --arg title "${{ github.event.pull_request.title }}" \
+            --arg author "${{ github.event.pull_request.user.login }}" \
+            --arg opened_at "${{ steps.calc.outputs.opened_at }}" \
+            --arg first_review_at "${{ steps.calc.outputs.first_review_at }}" \
+            --arg merged_at "${{ steps.calc.outputs.merged_at }}" \
+            --arg wait_seconds "${{ steps.calc.outputs.wait_seconds }}" \
+            --arg total_seconds "${{ steps.calc.outputs.total_seconds }}" \
+            '{"now":$now,"pr_number":$pr_number,"title":$title,"author":$author,"opened_at":$opened_at,"first_review_at":$first_review_at,"merged_at":$merged_at,"wait_seconds":$wait_seconds,"total_seconds":$total_seconds}')
+
+          REDIRECT_URL=$(curl -s -o /dev/null -w "%{redirect_url}" \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -d "$BODY" \
+            "https://script.google.com/macros/s/AKfycbxKd8CIMGgk_Ld-yPqfNGYbygtIUZ6A14SXVa3U5kAPmsuJgb-kZzByfsjbpJjTLcNUrQ/exec?token=${{ secrets.APPS_SCRIPT_TOKEN }}")
+
+          curl -sf "$REDIRECT_URL"
+
