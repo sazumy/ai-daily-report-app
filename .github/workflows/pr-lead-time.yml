@@ -8,8 +8,12 @@ jobs:
   measure-lead-time:
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Calculate lead time
+        id: calc
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -61,6 +65,8 @@ jobs:
               echo "| 初回レビュー → マージ（レビュー後） | ${POST_REVIEW_LABEL} |"
               echo "| **合計リードタイム** | **${TOTAL_LABEL}** |"
             } >> "$GITHUB_STEP_SUMMARY"
+
+            echo "wait_seconds=${WAIT_DIFF}" >> "$GITHUB_OUTPUT"
           else
             {
               echo "| マージ日時 | ${MERGED_AT} |"
@@ -68,4 +74,40 @@ jobs:
               echo ""
               echo "> レビューなしでマージされました。"
             } >> "$GITHUB_STEP_SUMMARY"
+
+            echo "wait_seconds=" >> "$GITHUB_OUTPUT"
           fi
+
+          echo "opened_at=${OPENED_AT}" >> "$GITHUB_OUTPUT"
+          echo "first_review_at=${FIRST_REVIEW_AT}" >> "$GITHUB_OUTPUT"
+          echo "merged_at=${MERGED_AT}" >> "$GITHUB_OUTPUT"
+          echo "total_seconds=${TOTAL_DIFF}" >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.SERVICE_ACCOUNT }}
+
+      - name: Write to Google Sheets
+        run: |
+          ACCESS_TOKEN=$(gcloud auth print-access-token)
+          NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          BODY=$(jq -n \
+            --arg now "$NOW" \
+            --arg pr_number "${{ github.event.pull_request.number }}" \
+            --arg title "${{ github.event.pull_request.title }}" \
+            --arg author "${{ github.event.pull_request.user.login }}" \
+            --arg opened_at "${{ steps.calc.outputs.opened_at }}" \
+            --arg first_review_at "${{ steps.calc.outputs.first_review_at }}" \
+            --arg merged_at "${{ steps.calc.outputs.merged_at }}" \
+            --arg wait_seconds "${{ steps.calc.outputs.wait_seconds }}" \
+            --arg total_seconds "${{ steps.calc.outputs.total_seconds }}" \
+            '{"values": [[$now, $pr_number, $title, $author, $opened_at, $first_review_at, $merged_at, $wait_seconds, $total_seconds]]}')
+
+          curl -sf -X POST \
+            "https://sheets.googleapis.com/v4/spreadsheets/${{ secrets.GOOGLE_SHEETS_ID }}/values/%E3%82%B7%E3%83%BC%E3%83%881!A:I:append?valueInputOption=USER_ENTERED" \
+            -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$BODY"
