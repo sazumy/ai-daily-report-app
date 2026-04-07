@@ -1,0 +1,158 @@
+name: Track First Review At
+
+# PRに初回レビューが来たとき、GitHub Projects の「First Review At」フィールドに日時を書き込む
+# ※ 既にフィールドが埋まっている場合は上書きしない（初回のみ記録）
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  write-first-review-at:
+    # DISMISSED レビューは除外
+    if: github.event.review.state != 'DISMISSED'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write "First Review At" to GitHub Projects
+        uses: actions/github-script@v7
+        env:
+          # リポジトリの Variables に PROJECT_NUMBER（数値）を設定してください
+          PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
+        with:
+          # project スコープを持つ PAT を PROJECT_TOKEN シークレットに設定してください
+          github-token: ${{ secrets.PROJECT_TOKEN }}
+          script: |
+            const prNodeId   = context.payload.pull_request.node_id;
+            const reviewedAt = context.payload.review.submitted_at;
+            const owner      = context.repo.owner;
+            const projectNum = parseInt(process.env.PROJECT_NUMBER, 10);
+
+            if (!projectNum) {
+              core.setFailed('PROJECT_NUMBER variable is not set.');
+              return;
+            }
+
+            // ── 1. プロジェクト ID と "First Review At" フィールド ID を取得 ──
+            const projectQuery = `
+              query($owner: String!, $number: Int!) {
+                user(login: $owner) {
+                  projectV2(number: $number) {
+                    id
+                    fields(first: 50) {
+                      nodes {
+                        ... on ProjectV2Field {
+                          id
+                          name
+                          dataType
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            `;
+
+            const projectData = await github.graphql(projectQuery, { owner, number: projectNum });
+            const project = projectData.user.projectV2;
+
+            if (!project) {
+              core.setFailed(`Project #${projectNum} not found for user ${owner}.`);
+              return;
+            }
+
+            const projectId = project.id;
+            const field = project.fields.nodes.find(
+              f => f.name === 'First Review At' && f.dataType === 'DATE'
+            );
+
+            if (!field) {
+              core.setFailed('"First Review At" という DATE 型フィールドがプロジェクトに見つかりません。');
+              return;
+            }
+
+            const fieldId = field.id;
+
+            // ── 2. PR に紐づくプロジェクトアイテム ID を取得 ──
+            const itemQuery = `
+              query($projectId: ID!, $cursor: String) {
+                node(id: $projectId) {
+                  ... on ProjectV2 {
+                    items(first: 100, after: $cursor) {
+                      pageInfo { hasNextPage endCursor }
+                      nodes {
+                        id
+                        content {
+                          ... on PullRequest { id }
+                        }
+                        fieldValues(first: 20) {
+                          nodes {
+                            ... on ProjectV2ItemFieldDateValue {
+                              field { ... on ProjectV2Field { id } }
+                              date
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            `;
+
+            let itemId = null;
+            let alreadySet = false;
+            let cursor = null;
+
+            outer: while (true) {
+              const data = await github.graphql(itemQuery, { projectId, cursor });
+              const { nodes, pageInfo } = data.node.items;
+
+              for (const item of nodes) {
+                if (item.content?.id === prNodeId) {
+                  itemId = item.id;
+                  // すでに "First Review At" が埋まっているか確認
+                  alreadySet = item.fieldValues.nodes.some(
+                    v => v.field?.id === fieldId && v.date
+                  );
+                  break outer;
+                }
+              }
+
+              if (!pageInfo.hasNextPage) break;
+              cursor = pageInfo.endCursor;
+            }
+
+            if (!itemId) {
+              core.warning('この PR はプロジェクトに追加されていません。スキップします。');
+              return;
+            }
+
+            if (alreadySet) {
+              core.info('"First Review At" は既に設定済みです。スキップします。');
+              return;
+            }
+
+            // ── 3. フィールドに日時を書き込む（DATE 型は YYYY-MM-DD 形式） ──
+            const dateOnly = reviewedAt.slice(0, 10); // "2026-04-02T..." → "2026-04-02"
+
+            const updateMutation = `
+              mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $value: String!) {
+                updateProjectV2ItemFieldValue(input: {
+                  projectId: $projectId
+                  itemId:    $itemId
+                  fieldId:   $fieldId
+                  value:     { date: $value }
+                }) {
+                  projectV2Item { id }
+                }
+              }
+            `;
+
+            await github.graphql(updateMutation, {
+              projectId,
+              itemId,
+              fieldId,
+              value: dateOnly,
+            });
+
+            core.info(`✅ "First Review At" を ${dateOnly} に設定しました（PR: #${context.payload.pull_request.number}）`);
