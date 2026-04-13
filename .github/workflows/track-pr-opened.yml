@@ -1,0 +1,98 @@
+name: Track PR Opened At
+
+# PRがオープンされたとき、GitHub Projects の "Opened At" フィールドに開始時刻を書き込む
+
+on:
+  pull_request:
+    types: [opened]
+
+jobs:
+  write-opened-at:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write "Opened At" to GitHub Projects
+        uses: actions/github-script@v7
+        env:
+          PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
+        with:
+          github-token: ${{ secrets.PROJECT_TOKEN }}
+          script: |
+            const prNodeId   = context.payload.pull_request.node_id;
+            const openedAt   = context.payload.pull_request.created_at;
+            const owner      = context.repo.owner;
+            const projectNum = parseInt(process.env.PROJECT_NUMBER, 10);
+
+            if (!projectNum) {
+              core.setFailed('PROJECT_NUMBER variable is not set.');
+              return;
+            }
+
+            // ── 1. プロジェクト ID と "Opened At" フィールド ID を取得 ──
+            const { user } = await github.graphql(`
+              query($owner: String!, $number: Int!) {
+                user(login: $owner) {
+                  projectV2(number: $number) {
+                    id
+                    fields(first: 50) {
+                      nodes {
+                        ... on ProjectV2Field { id name dataType }
+                      }
+                    }
+                  }
+                }
+              }
+            `, { owner, number: projectNum });
+
+            const project = user?.projectV2;
+            if (!project) { core.setFailed(`Project #${projectNum} not found.`); return; }
+
+            const openedAtField = project.fields.nodes.find(f => f.name === 'Opened At');
+            if (!openedAtField) { core.setFailed('"Opened At" field not found in project.'); return; }
+
+            // ── 2. PR に紐づくプロジェクトアイテム ID を取得 ──
+            let itemId = null;
+            let cursor = null;
+
+            outer: while (true) {
+              const data = await github.graphql(`
+                query($projectId: ID!, $cursor: String) {
+                  node(id: $projectId) {
+                    ... on ProjectV2 {
+                      items(first: 100, after: $cursor) {
+                        pageInfo { hasNextPage endCursor }
+                        nodes {
+                          id
+                          content { ... on PullRequest { id } }
+                        }
+                      }
+                    }
+                  }
+                }
+              `, { projectId: project.id, cursor });
+
+              const { nodes, pageInfo } = data.node.items;
+              for (const item of nodes) {
+                if (item.content?.id === prNodeId) { itemId = item.id; break outer; }
+              }
+              if (!pageInfo.hasNextPage) break;
+              cursor = pageInfo.endCursor;
+            }
+
+            if (!itemId) {
+              core.warning('この PR はプロジェクトに追加されていません。スキップします。');
+              return;
+            }
+
+            // ── 3. "Opened At" を書き込む ──
+            await github.graphql(`
+              mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $value: String!) {
+                updateProjectV2ItemFieldValue(input: {
+                  projectId: $projectId
+                  itemId: $itemId
+                  fieldId: $fieldId
+                  value: { text: $value }
+                }) { projectV2Item { id } }
+              }
+            `, { projectId: project.id, itemId, fieldId: openedAtField.id, value: openedAt });
+
+            core.info(`✅ "Opened At" を ${openedAt} に設定しました（PR: #${context.payload.pull_request.number}）`);

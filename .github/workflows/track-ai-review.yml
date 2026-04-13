@@ -1,0 +1,157 @@
+name: Track AI Review Created At
+
+# "AI Reviewed" ラベルが付いたとき、GitHub Projects の "AI Review Created At" と
+# "Wait for AI (min)" フィールドを更新する
+# ※ 既にフィールドが埋まっている場合は上書きしない（初回のみ記録）
+
+on:
+  pull_request:
+    types: [labeled]
+
+jobs:
+  write-ai-review-at:
+    if: github.event.label.name == 'AI Reviewed'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write "AI Review Created At" and "Wait for AI (min)" to GitHub Projects
+        uses: actions/github-script@v7
+        env:
+          PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
+        with:
+          github-token: ${{ secrets.PROJECT_TOKEN }}
+          script: |
+            const prNodeId   = context.payload.pull_request.node_id;
+            const prNumber   = context.payload.pull_request.number;
+            const owner      = context.repo.owner;
+            const repo       = context.repo.repo;
+            const projectNum = parseInt(process.env.PROJECT_NUMBER, 10);
+
+            if (!projectNum) {
+              core.setFailed('PROJECT_NUMBER variable is not set.');
+              return;
+            }
+
+            // ── 1. "AI Reviewed" ラベルが付いた時刻を Issues Events API から取得 ──
+            let labeledAt = null;
+            let page = 1;
+            while (true) {
+              const { data: events } = await github.rest.issues.listEvents({
+                owner, repo, issue_number: prNumber, per_page: 100, page
+              });
+              const match = events
+                .filter(e => e.event === 'labeled' && e.label?.name === 'AI Reviewed')
+                .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
+              if (match) { labeledAt = match.created_at; break; }
+              if (events.length < 100) break;
+              page++;
+            }
+
+            if (!labeledAt) {
+              core.setFailed('"AI Reviewed" label event not found.');
+              return;
+            }
+
+            // ── 2. プロジェクト ID とフィールド ID を取得 ──
+            const { user } = await github.graphql(`
+              query($owner: String!, $number: Int!) {
+                user(login: $owner) {
+                  projectV2(number: $number) {
+                    id
+                    fields(first: 50) {
+                      nodes {
+                        ... on ProjectV2Field { id name dataType }
+                      }
+                    }
+                  }
+                }
+              }
+            `, { owner, number: projectNum });
+
+            const project = user?.projectV2;
+            if (!project) { core.setFailed(`Project #${projectNum} not found.`); return; }
+
+            const fields         = project.fields.nodes;
+            const aiReviewField  = fields.find(f => f.name === 'AI Review Created At');
+            const waitForAIField = fields.find(f => f.name === 'Wait for AI (min)');
+
+            if (!aiReviewField) { core.setFailed('"AI Review Created At" field not found.'); return; }
+
+            // ── 3. PR のプロジェクトアイテム ID と既存フィールド値を取得 ──
+            let itemId = null;
+            let openedAtValue = null;
+            let alreadySet = false;
+            let cursor = null;
+
+            outer: while (true) {
+              const data = await github.graphql(`
+                query($projectId: ID!, $cursor: String) {
+                  node(id: $projectId) {
+                    ... on ProjectV2 {
+                      items(first: 100, after: $cursor) {
+                        pageInfo { hasNextPage endCursor }
+                        nodes {
+                          id
+                          content { ... on PullRequest { id } }
+                          fieldValues(first: 20) {
+                            nodes {
+                              ... on ProjectV2ItemFieldTextValue {
+                                field { ... on ProjectV2Field { name } }
+                                text
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              `, { projectId: project.id, cursor });
+
+              const { nodes, pageInfo } = data.node.items;
+              for (const item of nodes) {
+                if (item.content?.id === prNodeId) {
+                  itemId = item.id;
+                  for (const fv of item.fieldValues.nodes) {
+                    if (fv.field?.name === 'AI Review Created At' && fv.text) alreadySet = true;
+                    if (fv.field?.name === 'Opened At' && fv.text) openedAtValue = fv.text;
+                  }
+                  break outer;
+                }
+              }
+              if (!pageInfo.hasNextPage) break;
+              cursor = pageInfo.endCursor;
+            }
+
+            if (!itemId) { core.warning('この PR はプロジェクトに追加されていません。スキップします。'); return; }
+            if (alreadySet) { core.info('"AI Review Created At" は既に設定済みです。スキップします。'); return; }
+
+            // ── 4. "AI Review Created At" を書き込む ──
+            await github.graphql(`
+              mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $value: String!) {
+                updateProjectV2ItemFieldValue(input: {
+                  projectId: $projectId
+                  itemId: $itemId
+                  fieldId: $fieldId
+                  value: { text: $value }
+                }) { projectV2Item { id } }
+              }
+            `, { projectId: project.id, itemId, fieldId: aiReviewField.id, value: labeledAt });
+            core.info(`✅ "AI Review Created At" を ${labeledAt} に設定しました（PR: #${prNumber}）`);
+
+            // ── 5. "Wait for AI (min)" を計算して書き込む ──
+            if (waitForAIField && openedAtValue) {
+              const diffMin = Math.round((new Date(labeledAt) - new Date(openedAtValue)) / 60000);
+              await github.graphql(`
+                mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $value: Float!) {
+                  updateProjectV2ItemFieldValue(input: {
+                    projectId: $projectId
+                    itemId: $itemId
+                    fieldId: $fieldId
+                    value: { number: $value }
+                  }) { projectV2Item { id } }
+                }
+              `, { projectId: project.id, itemId, fieldId: waitForAIField.id, value: diffMin });
+              core.info(`✅ "Wait for AI (min)" を ${diffMin} 分に設定しました`);
+            } else if (!openedAtValue) {
+              core.warning('"Opened At" が未設定のため "Wait for AI (min)" をスキップします。');
+            }
